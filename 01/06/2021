@@ -1,0 +1,386 @@
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <HTTPClient.h>
+#include <Time.h>
+#include <TridentTD_LineNotify.h>
+#include <Arduino.h>
+
+#include "SoftwareSerial.h"
+#include "DFRobotDFPlayerMini.h"
+
+#define WIFI_SSID "745_2.4G" /////////////*************แก้
+#define WIFI_PASSWORD "0850773865"////////**************แก้
+#define LINE_TOKEN_PIR "dUioczRzZ5SmRAlvwIEPc64COkyAOxlbsR0YvPB0crC"////***************กลุ่ม
+//#define LINE_TOKEN_PIR "YQiFDUNkc4ZJBobcnknas2WNLp41J3PJ82E1NXujG1M"////***************เพชร
+
+const int Mode = 36 ;
+const int Sensor = 39 ;
+const int Mask = 34 ;
+const int Door = 35 ;
+
+const int R = 32; // 
+const int G = 33; // 
+const int B = 25; //
+const int led = 26; //
+
+const int freq = 5000;
+const int ledChannel = 0;
+const int resolution = 8;
+
+int PM ;
+int Level  ;
+bool Mask_status ;
+bool Mask_wear ;
+int Sensor_status = 0 ;
+int Comeback_home = 0 ;
+int timezone = 7 * 3600; //ตั้งค่า TimeZone ตามเวลาประเทศไทย
+int dst = 0; //กำหนดค่า Date Swing Time
+
+SoftwareSerial mySoftwareSerial( 22, 23); //TX, RX
+DFRobotDFPlayerMini myDFPlayer;
+
+void setup() {
+
+  mySoftwareSerial.begin(9600);
+
+  Serial.begin(115200);
+  Serial.println(F("DFRobot DFPlayer Mini Demo"));
+  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
+
+  pinMode(Mask, INPUT);
+  pinMode(Door, INPUT);
+  pinMode(Sensor, INPUT);
+  pinMode(Mode, INPUT); // LOW = normal mode, HIGH = Covid-19 mode
+
+  pinMode(R, OUTPUT);// กำหนดการทำงานของขา D0 ให้เป็น Output
+  pinMode(G, OUTPUT);
+  pinMode(B, OUTPUT);
+  pinMode(led, OUTPUT);
+
+ ledcSetup(ledChannel, freq, resolution); //LEDSET
+ ledcAttachPin(R, ledChannel);
+ ledcAttachPin(G, ledChannel);
+ ledcAttachPin(B, ledChannel);
+ ledcAttachPin(led, ledChannel);
+ 
+  ledcWrite(R, 0);
+  ledcWrite(G, 0);
+  ledcWrite(B, 0);
+  ledcWrite(led, 0);
+
+  Serial.println("connecting");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("connecting");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println();
+  Serial.print("connected: ");
+  Serial.println(WiFi.localIP());
+  delay(100);
+  Serial.println("IMBD Ready!!");
+  LINE.setToken(LINE_TOKEN_PIR);
+
+  configTime(timezone, dst, "pool.ntp.org", "time.nist.gov"); //ดึงเวลาจาก Server
+  Serial.println("\nLoading time");
+
+  while (!time(nullptr)) {
+    Serial.print("*");
+    delay(100);
+  }
+
+  if (!myDFPlayer.begin(mySoftwareSerial)) { //Use softwareSerial to communicate with mp3.
+    Serial.println(F("Unable to begin:"));
+    Serial.println(F("1.Please recheck the connection!"));
+    Serial.println(F("2.Please insert the SD card!"));
+
+    while (true) {
+      delay(0); // Code to compatible with ESP8266 watch dog.
+    }
+  }
+  Serial.println(F("DFPlayer Mini online."));
+
+  myDFPlayer.volume(25); //ตั้งระดับความดังของเสียง 0-30
+
+}
+
+void loop() {
+
+SETPM:
+
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+    if (http.begin(client, "http://air4thai.pcd.go.th/services/getNewAQI_XML.php?stationID=bkp95t") )   {  // HTTP
+      // start connection and send HTTP header
+      int httpCode = http.GET();
+
+      // httpCode will be negative on error
+      if (httpCode > 0) {
+
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+          client.readStringUntil('Q');       //อ่านค่าที่ Server ตอบกลับมาทีละบรรทัด
+          client.readStringUntil('"');
+          String ScanLevel = client.readStringUntil('"');
+          client.readStringUntil('"');
+          String ScanPM = client.readStringUntil('"');
+          Level = ScanLevel.toInt();
+          PM = ScanPM.toInt();
+          Serial.print("Level=");
+          Serial.println(Level);
+          Serial.print("PM=");
+          Serial.println(PM);
+        }
+      } else {
+        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        for (int i = 0; i < 256; i++) {
+          ledcWrite(R, 255);
+          ledcWrite(G, 0);
+          ledcWrite(B, 0);
+          delay(3000);
+          ledcWrite(R, 0);
+          ledcWrite(G, 0);
+          ledcWrite(B, 0);
+          delay(3000);
+        }
+        http.end();
+      }
+    } else {
+      Serial.printf("[HTTP} Unable to connect\n");
+      for (int i = 0; i < 256; i++) {
+        ledcWrite(R, 255);
+        ledcWrite(G, 140);
+        ledcWrite(B, 0);
+        delay(3000);
+        ledcWrite(R, 0);
+        ledcWrite(G, 0);
+        ledcWrite(B, 0);
+        delay(3000);
+      }
+    }
+  }
+  if (Level == 1) {
+    ledcWrite(R, 0);
+    ledcWrite(G, 0);
+    ledcWrite(B, 200);
+  }
+  else if (Level == 2) {
+    ledcWrite(R, 0);
+    ledcWrite(G, 255);
+    ledcWrite(B, 0);
+  }
+  else if (Level == 3) {
+    ledcWrite(R, 255);
+    ledcWrite(G, 200);
+    ledcWrite(B, 0);
+  }
+  else if (Level == 4) {
+    ledcWrite(R, 200);
+    ledcWrite(G, 50);
+    ledcWrite(B, 0);
+  }
+  else if (Level == 5) {
+    ledcWrite(R, 255);
+    ledcWrite(G, 0);
+    ledcWrite(B, 0);
+    delay(500);
+  }
+  
+ CovidMode:
+  while (digitalRead(Mode) == HIGH) { // covid-19 mode
+    Mask_status = 0 ;
+    Serial.println("Ready");
+    
+    ledcWrite(led, 255); //ไฟ led ติด
+
+    while (Serial.available()) {
+    
+      while ((digitalRead(Door) == HIGH) && (digitalRead(Mask) == HIGH)) {
+      if (digitalRead(Mode) == LOW){
+        goto NormalMode;
+        }
+        //เซ็นเซอร์ตรวจจับเมื่อเดินผ่านกล่องแมส        
+        Sensor_status = digitalRead(Sensor); //อ่านค่าสัญญาณจากเซ็นเซอร์
+        Serial.print("Sensor_status = ");
+        Serial.println(Sensor_status);
+
+        if (Comeback_home == 0) { //อยู่ในบ้าน
+          if (Sensor_status == 0) { // ค่า เป็น 0 คือตรวจจับเจอวัตถุ
+            myDFPlayer.play(1);  //เล่นเสียง'อย่าลืมหยิบแมสนะคะ'
+            Serial.println("Walk pass");
+            if(Level >= 4){
+              myDFPlayer.play(4);  //เล่นเสียง'วันนี้ค่าฝุ่นละอองสูงมากค่ะ ใส่แมสก่อนออกจากบ้านด้วยนะคะ'
+            }
+            else{
+              myDFPlayer.play(5);  //เล่นเสียง'วันนี้อากาศดีค่ะ'
+            }
+            Serial.println("Walk pass");
+          }
+        }
+        
+        //แจ้งเตือนตามเวลา 
+        time_t now = time(nullptr);
+        struct tm* p_tm = localtime(&now);
+
+        if ((p_tm->tm_hour == 6) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 6:00 ให้แจ้งเตือนค่าฝุ่น
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+          delay (6000) ;
+        }
+        else if ((Comeback_home == 1) && (p_tm->tm_hour == 12) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 12:00 ให้แจ้งเตือนใส่แมสถ้าอยู่นอกบ้าน
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          delay (6000) ;
+        }
+        else if ((Comeback_home == 1) && (p_tm->tm_hour == 18) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 18:00 ให้แจ้งเตือนใส่แมสถ้าอยู่นอกบ้าน
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          delay (6000) ;
+        }
+        else if ((p_tm->tm_hour == 0) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 00:00 ให้รีเซ็ตระบบ
+          goto SETPM ;
+        }
+      } //ถ้าเปิดกล่องแมสตอนประตูปิดอยู่ถึงจะทำใน if
+      Serial.println("Open Door or Mask");
+      
+      if (digitalRead(Mask) == LOW) {
+        Mask_status = digitalRead(Mask);
+        while (digitalRead(Mask) == LOW) {
+          delay(10); // รอปิดกล่องแมส
+        }
+        Serial.println("Open Mask");
+      }
+      while (digitalRead(Door) == HIGH) {
+        delay(10); //รอประตูเปิด(ถ้าเปิดกล่องแมสตอนประตูปิดอยู่ลูปนี้ถึงจะมีผล)
+      }
+      Serial.println("Open Door");
+
+      if (Comeback_home == 1) { //กลับเข้าบ้าน
+        myDFPlayer.play(6);  //เล่นเสียง'ยินดีต้อนรับกลับบ้านค่ะ อย่าลืมล้างมือ อาบน้ำนะคะ'
+        Comeback_home = 0 ;
+        Serial.println("Back home");
+        while (digitalRead(Door) == LOW) {
+          delay(10); //รอประตูปิด
+        }
+      }
+
+      else { //ออกจากบ้าน
+        if (Mask_status == 1) { //ถ้าเปิดกล่องแมสแล้ว
+          myDFPlayer.play(2);  //เล่นเสียง'หยิบแมสแล้ว อย่าลืมล้างมือบ่อยๆนะคะ'
+          Serial.println("Wear Mask");
+        }
+
+        else if (Mask_status == 0) { //ถ้ายังไม่ได้เปิดกล่องแมส
+          Serial.println("Forget Mask --> Detect!");
+          myDFPlayer.play(3);  //เล่นเสียง'ลืมหยิบแมส หยิบแมสก่อนนะคะ'
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+        }
+        while ((digitalRead(Door) == LOW)) {
+          myDFPlayer.play(7);  //เล่นเสียง'เดินทางปลอดภัย สวัสดีค่ะ'
+          delay(10);
+        }; //รอประตูปิดคือออกจากบ้านแล้ว
+        Comeback_home = 1 ;
+        Serial.println("Leave home");
+      }
+    }
+  }
+     NormalMode:
+    while (digitalRead(Mode) == LOW) { // normal mode
+    Mask_status = 0 ;
+    Serial.println("Ready");
+    
+    ledcWrite(led, 0);    //ไฟ LED ดับ
+
+    while (Serial.available()) {
+    
+      while ((digitalRead(Door) == HIGH) && (digitalRead(Mask) == LOW)) {
+
+        if (digitalRead(Mode) == HIGH){
+        goto CovidMode ;
+        }
+        //เซ็นเซอร์ตรวจจับเมื่อเดินผ่านกล่องแมส        
+        Sensor_status = digitalRead(Sensor); //อ่านค่าสัญญาณจากเซ็นเซอร์
+        Serial.print("Sensor_status = ");
+        Serial.println(Sensor_status);
+
+        if (Comeback_home == 0) { //อยู่ในบ้าน
+          if (Sensor_status == 0) { // ค่า เป็น 0 คือตรวจจับเจอวัตถุ
+             if(Level >= 4){
+            myDFPlayer.play(4);  //เล่นเสียง'วันนี้ค่าฝุ่นละอองสูงมากค่ะ ใส่แมสก่อนออกจากบ้านด้วยนะคะ'
+            }
+            else{
+            myDFPlayer.play(5);  //เล่นเสียง'วันนี้อากาศดีค่ะ'
+            }
+            Serial.println("Walk pass");
+          }
+        }
+        
+        //แจ้งเตือนตามเวลา 
+        time_t now = time(nullptr);
+        struct tm* p_tm = localtime(&now);
+
+        if ((p_tm->tm_hour == 6) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 6:00 ให้แจ้งเตือนค่าฝุ่น
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+          delay (6000) ;
+        }
+        else if ((Comeback_home == 1) && (p_tm->tm_hour == 12) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5) && (Level >= 4)) { //เวลา 12:00 ให้แจ้งเตือนใส่แมสถ้าอยู่นอกบ้าน
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+          delay (6000) ;
+        }
+        else if ((Comeback_home == 1) && (p_tm->tm_hour == 18) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5) && (Level >= 4)) { //เวลา 18:00 ให้แจ้งเตือนใส่แมสถ้าอยู่นอกบ้าน
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+          delay (6000) ;
+        }
+        else if ((p_tm->tm_hour == 0) && (p_tm->tm_min == 00) && (p_tm->tm_sec <= 5)) { //เวลา 00:00 ให้รีเซ็ตระบบ
+          goto SETPM ;
+        }
+      } //ถ้าเปิดกล่องแมสตอนประตูปิดอยู่ถึงจะทำใน if
+      Serial.println("Open Door or Mask");
+      
+      if (digitalRead(Mask) == HIGH) {
+        Mask_status = digitalRead(Mask);
+        while (digitalRead(Mask) == HIGH) {
+          delay(10); // รอปิดกล่องแมส
+        }
+        Serial.println("Open Mask");
+      }
+      while (digitalRead(Door) == HIGH) {
+        delay(10); //รอประตูเปิด(ถ้าเปิดกล่องแมสตอนประตูปิดอยู่ลูปนี้ถึงจะมีผล)
+      }
+      Serial.println("Open Door");
+
+      if (Comeback_home == 1) { //กลับเข้าบ้าน
+        myDFPlayer.play(6);  //เล่นเสียง'ยินดีต้อนรับกลับบ้านค่ะ อย่าลืมล้างมือ อาบน้ำนะคะ'
+        Comeback_home = 0 ;
+        Serial.println("Back home");
+        while (digitalRead(Door) == LOW) {
+          delay(10); //รอประตูปิด
+        }
+      }
+
+      else { //ออกจากบ้าน
+        if (Mask_status == 1) { //ถ้าเปิดกล่องแมสแล้ว
+          Mask_wear = 1;
+          myDFPlayer.play(2);  //เล่นเสียง'หยิบแมสแล้ว อย่าลืมล้างมือบ่อยๆนะคะ'
+          Serial.println("Wear Mask");
+        }
+
+        else if (Mask_status == 0 && (Level >= 4)) { //ถ้ายังไม่ได้เปิดกล่องแมส และฝุ่นเยอะ
+          Serial.println("Forget Mask --> Detect!");
+          myDFPlayer.play(3);  //เล่นเสียง'ลืมหยิบแมส หยิบแมสก่อนนะคะ'
+          LINE.notifySticker("อย่าลืมใส่แมสด้วยนะคะ", 4, 603);
+          LINE.notify("ค่าฝุ่นวันนี้อยู่ที่:" + String(PM) + " ug/m3");
+        }
+        while ((digitalRead(Door) == LOW)) {
+          myDFPlayer.play(7);  //เล่นเสียง'เดินทางปลอดภัย สวัสดีค่ะ'
+          delay(10);
+        }; //รอประตูปิดคือออกจากบ้านแล้ว
+        Comeback_home = 1 ;
+        Serial.println("Leave home");
+      }
+    }
+  }
+  goto CovidMode;
+}
